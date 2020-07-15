@@ -1,0 +1,24 @@
+- hosts: host-with-tpm2
+  tasks:
+    - name: get RSA EK cert
+      tpm2_get_certificate:
+        type: 'rsa'
+      register: rsa_ek
+    - name: get ECC EK cert
+      tpm2_get_certificate:
+        type: 'ecc'
+      register: ecc_ek
+    - name: validate RSA EK
+      ek_validate:
+        cert: "{{ rsa_ek.cert }}"
+        public: "{{ rsa_ek.public }}"
+        cafile: "tpm2-ca.pem" # default is tpm2-ca.pem and is required
+        crlfile: "tpm2-crl.pem"
+    - name: validate ECC EK
+      ek_validate:
+        cert: "{{ ecc_ek.cert }}"
+        public: "{{ ecc_ek.public }}"
+        cafile: "tpm2-ca.pem" # default is tpm2-ca.pem and is required
+        crlfile: "tpm2-crl.pem"
+  roles:
+    - 'tpm2'
