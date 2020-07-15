@@ -1,0 +1,157 @@
+#!/usr/bin/python3
+# Copyright (c) 2020 by Erik Larsson 
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+
+
+from contextlib import ExitStack
+from base64 import b64encode
+from ansible.module_utils.basic import AnsibleModule
+from ansible.module_utils.tpm2 import esysctx, nvreadall, getnvindices, get_ek_template
+from tpm2_pytss.binding import (
+    Tss2_MU_TPM2B_PUBLIC_Unmarshal,
+    Tss2_MU_TPM2B_PUBLIC_Marshal,
+    Tss2_MU_TPMS_CONTEXT_Marshal,
+    TPM2B_PUBLIC,
+    TPM2B_PUBLIC_PTR_PTR,
+    TPM2B_CREATION_DATA_PTR_PTR,
+    TPM2B_DIGEST_PTR_PTR,
+    TPMT_TK_CREATION_PTR_PTR,
+    ESYS_TR_RH_ENDORSEMENT,
+    ESYS_TR_PASSWORD,
+    ESYS_TR_NONE,
+    TPM2B_SENSITIVE_CREATE,
+    TPM2B_DATA,
+    TPML_PCR_SELECTION,
+    TPMS_CONTEXT_PTR_PTR,
+)
+
+class tpm2_get_cert(object):
+    indices = dict(
+        rsa=0x01c00002,
+        ecc=0x01c0000a,
+    )
+    def __init__(self):
+        self.module = AnsibleModule(
+            argument_spec=dict(
+                type=dict(type='str', default='rsa', choices=('rsa', 'ecc', 'high')),
+                index=dict(type='int')
+            )
+        )
+        self.keytype = self.module.params['type']
+        if self.keytype == 'high':
+            self.index = self.module.params['index']
+            if not isinstance(self.index, int):
+                raise AnsibleError('index must be specified if type is high')
+            elif self.index < 0x01C00012 or self.index > 0x01C07FFF:
+                raise AnsibleError('bad index range')
+            elif (self.index % 2) != 0:
+                raise AnsibleError('certificate NV index must be even') 
+        else:
+            self.index = self.indices[self.keytype]
+        self.tctiname = self.module.params.get('tctiname', 'device')
+        self.tcticonf = self.module.params.get('tcticonf', '')
+
+        self.indices = []
+        
+    def gen_ek(self, ectx, template):
+        insensitive = TPM2B_SENSITIVE_CREATE(size=0)
+        outsideinfo = TPM2B_DATA(size=0)
+        creationpcr = TPML_PCR_SELECTION(count=0)
+        with ExitStack() as stack:
+            obj = stack.enter_context(ectx.flush_tr())
+            outpublic = stack.enter_context(TPM2B_PUBLIC_PTR_PTR())
+            creationdata = stack.enter_context(TPM2B_CREATION_DATA_PTR_PTR())
+            creationhash = stack.enter_context(TPM2B_DIGEST_PTR_PTR())
+            creationtkt = stack.enter_context(TPMT_TK_CREATION_PTR_PTR())
+            ectx.CreatePrimary(
+                ESYS_TR_RH_ENDORSEMENT,
+                ESYS_TR_PASSWORD,
+                ESYS_TR_NONE,
+                ESYS_TR_NONE,
+                insensitive,
+                template,
+                outsideinfo,
+                creationpcr,
+                obj,
+                outpublic,
+                creationdata,
+                creationhash,
+                creationtkt,
+            )
+            return (obj, outpublic.value)
+
+    def get_template(self, ectx):
+        template = None
+        # NV index offset for standard is cert index + 2
+        tindex = self.index + 2
+        # NV index offset for high is cert index + 1
+        if self.keytype == 'high':
+            tindex = self.index + 1
+        if tindex in self.indices:
+            mtempl = nvreadall(ectx)
+            template = TPM2B_PUBLIC(size=0)
+            Tss2_MU_TPM2B_PUBLIC_Unmarshal(mtempl, 0, template)
+        elif self.keytype in ('ecc', 'rsa'):
+            # get default templates here
+            template = get_ek_template(self.keytype)
+        elif self.keytype == 'high':
+            # need to look at the certificate to get type
+            pass
+        return template
+
+    def get_nonce(self, ectx):
+        # implement
+        return None
+
+    def set_nonce(self, template, nonce):
+        # implement
+        return None
+
+    def get_context(self, ectx, obj):
+        # FIXME
+        with ExitStack() as stack:
+            ctx = stack.enter_context(TPMS_CONTEXT_PTR_PTR())
+            ectx.ContextSave(obj, ctx)
+        cb = bytearray(1024)
+        _, off = Tss2_MU_TPMS_CONTEXT_Marshal(ctx.value, cb, 0)
+        cb = cb[0:off]
+        return cb
+
+    def marshal_public(self, public):
+        pbuf = bytearray(1024) #FIXME, bigger size?
+        _, off = Tss2_MU_TPM2B_PUBLIC_Marshal(public, pbuf, 0)
+        pbuf = pbuf[0:off]
+        return b64encode(pbuf)
+    
+    def get_ek(self, ectx):
+        template = self.get_template(ectx)
+        nonce = self.get_nonce(ectx)
+        if nonce:
+            self.set_nonce(template, nonce)
+        (obj, public) = self.gen_ek(ectx, template)
+        #ctx = self.get_context(ectx, obj)
+        b64_pub = self.marshal_public(public)
+        b64_templ = self.marshal_public(template)
+        return (None, b64_pub, b64_templ) # ctx, pub, template
+
+    def run_module(self):
+        template = None
+        public = None
+        with ExitStack() as stack:
+            ectx = esysctx(stack, self.tctiname, self.tcticonf)
+            self.indices = getnvindices(ectx)
+            if self.index not in self.indices:
+                raise AnsibleError('certificate NV area does not exist')
+            data = nvreadall(ectx, self.index)
+            (_, public, template) = self.get_ek(ectx)
+        cb = b64encode(data)
+        cert = "-----BEGIN CERTIFICATE-----\n"
+        for i in range(0, len(cb), 64):
+            cert = cert + cb[i:i+64].decode('ascii') + "\n"
+        cert = cert + "-----END CERTIFICATE-----\n"
+        self.module.exit_json(cert=cert, public=public, template=template) 
+
+if __name__ == '__main__':
+    m = tpm2_get_cert()
+    m.run_module()
