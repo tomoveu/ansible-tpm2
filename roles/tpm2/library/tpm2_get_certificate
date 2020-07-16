@@ -79,7 +79,9 @@ class tpm2_get_cert(object):
                 creationhash,
                 creationtkt,
             )
-            return (obj, outpublic.value)
+            ctx = stack.enter_context(TPMS_CONTEXT_PTR_PTR())
+            ectx.ContextSave(obj, ctx)
+            return (ctx.value, outpublic.value)
 
     def get_template(self, ectx):
         template = None
@@ -108,15 +110,11 @@ class tpm2_get_cert(object):
         # implement
         return None
 
-    def get_context(self, ectx, obj):
-        # FIXME
-        with ExitStack() as stack:
-            ctx = stack.enter_context(TPMS_CONTEXT_PTR_PTR())
-            ectx.ContextSave(obj, ctx)
-        cb = bytearray(1024)
-        _, off = Tss2_MU_TPMS_CONTEXT_Marshal(ctx.value, cb, 0)
-        cb = cb[0:off]
-        return cb
+    def marshal_context(self, ctx):
+        cbuf = bytearray(2048) #FIME, right size?
+        _, off = Tss2_MU_TPMS_CONTEXT_Marshal(ctx, cbuf, 0)
+        cbuf = cbuf[0:off]
+        return b64encode(cbuf)
 
     def marshal_public(self, public):
         pbuf = bytearray(1024) #FIXME, bigger size?
@@ -129,11 +127,11 @@ class tpm2_get_cert(object):
         nonce = self.get_nonce(ectx)
         if nonce:
             self.set_nonce(template, nonce)
-        (obj, public) = self.gen_ek(ectx, template)
-        #ctx = self.get_context(ectx, obj)
+        (ctx, public) = self.gen_ek(ectx, template)
+        b64_ctx = self.marshal_context(ctx)
         b64_pub = self.marshal_public(public)
         b64_templ = self.marshal_public(template)
-        return (None, b64_pub, b64_templ) # ctx, pub, template
+        return (b64_ctx, b64_pub, b64_templ) # ctx, pub, template
 
     def run_module(self):
         template = None
@@ -144,13 +142,13 @@ class tpm2_get_cert(object):
             if self.index not in self.indices:
                 raise AnsibleError('certificate NV area does not exist')
             data = nvreadall(ectx, self.index)
-            (_, public, template) = self.get_ek(ectx)
+            (ctx, public, template) = self.get_ek(ectx)
         cb = b64encode(data)
         cert = "-----BEGIN CERTIFICATE-----\n"
         for i in range(0, len(cb), 64):
             cert = cert + cb[i:i+64].decode('ascii') + "\n"
         cert = cert + "-----END CERTIFICATE-----\n"
-        self.module.exit_json(cert=cert, public=public, template=template) 
+        self.module.exit_json(cert=cert, contex=ctx, public=public, template=template)
 
 if __name__ == '__main__':
     m = tpm2_get_cert()
