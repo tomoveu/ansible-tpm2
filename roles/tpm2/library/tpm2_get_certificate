@@ -148,7 +148,7 @@ class tpm2_get_cert(object):
         for i in range(0, len(cb), 64):
             cert = cert + cb[i:i+64].decode('ascii') + "\n"
         cert = cert + "-----END CERTIFICATE-----\n"
-        self.module.exit_json(cert=cert, contex=ctx, public=public, template=template)
+        self.module.exit_json(cert=cert, context=ctx, public=public, template=template)
 
 if __name__ == '__main__':
     m = tpm2_get_cert()
