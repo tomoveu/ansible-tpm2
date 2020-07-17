@@ -1,0 +1,58 @@
+#!/usr/bin/python3
+# Copyright (c) 2020 by Erik Larsson 
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+
+from contextlib import ExitStack
+from ansible.module_utils.basic import AnsibleModule
+from ansible.module_utils.tpm2.marshal import b64unmarshal, b64marshal
+from ansible.module_utils.tpm2 import esysctx
+from ansible.module_utils.tpm2.ak import create_ak
+from tpm2_pytss.binding import (
+    TPM2B_PUBLIC,
+    TPMS_CONTEXT,
+)
+
+class tpm2_gen_ak(object):
+    def load_context(self, ctx):
+        obj = self.ectx.ESYS_TR_PTR()
+        self.ectx.ContextLoad(
+            ctx,
+            obj,
+        )
+        return obj.value()
+
+    def __init__(self):
+        self.module = AnsibleModule(
+            argument_spec=dict(
+                type=dict(type='str', default='rsa', choices=('rsa', 'ecc')),
+                parent_context=dict(type='str'),
+		parent_template=dict(type='str'),
+            )
+        )
+        self.tctiname = self.module.params.get('tctiname', 'device')
+        self.tcticonf = self.module.params.get('tcticonf', '')
+        self.keytype = self.module.params.get('type')
+        stack = ExitStack()
+        self.ectx = esysctx(stack, self.tctiname, self.tcticonf)
+        if self.module.params['parent_context']:
+            ctx = TPMS_CONTEXT()
+            b64unmarshal(self.module.params['parent_context'], ctx)
+            self.phandle = self.load_context(ctx)
+        elif self.module.params['parent_template']:
+            # b64unmarshal TPM2B_PUBLIC
+            # CreatePrimary
+            # set self.phandle
+            pass
+        else:
+            self.module.fail_json(msg='one of parent_context or parent_template is required')
+
+    def run_module(self):
+        (private, public) = create_ak(self.ectx, self.phandle, self.keytype)
+        b64_private = b64marshal(private)
+        b64_public = b64marshal(public)
+        self.module.exit_json(changed=True, private=b64_private,  public=b64_public)
+
+if __name__ == '__main__':
+    m = tpm2_gen_ak()
+    m.run_module()
