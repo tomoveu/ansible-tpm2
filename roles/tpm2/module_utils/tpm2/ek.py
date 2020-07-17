@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 
 
+import secrets
 from contextlib import ExitStack
 from tpm2_pytss.binding import (
     TPMT_PUBLIC,
@@ -22,7 +23,16 @@ from tpm2_pytss.binding import (
     TPM2_ALG_NULL,
     TPM2_ALG_ECC,
     TPM2_ECC_NIST_P256,
-    TPM2B_PUBLIC
+    TPM2B_PUBLIC,
+    TPM2B_NONCE,
+    TPMT_SYM_DEF,
+    ESYS_TR_NONE,
+    TPM2_SE_POLICY,
+    TPM2B_NONCE,
+    ESYS_TR_PASSWORD,
+    ESYS_TR_RH_ENDORSEMENT,
+    TPM2B_TIMEOUT_PTR_PTR,
+    TPMT_TK_AUTH_PTR_PTR,
 )
 
 ek_base_template = TPMT_PUBLIC(
@@ -68,3 +78,40 @@ def get_ek_template(keytype):
         return None
 
     return TPM2B_PUBLIC(size=0, publicArea=pub)
+
+def ek_session(ectx):
+    nonce_caller = TPM2B_NONCE(buffer=secrets.token_bytes(32))
+    nonce_tpm = TPM2B_NONCE()
+    cphash = TPM2B_DIGEST()
+    policy_ref = TPM2B_NONCE()
+    sym = TPMT_SYM_DEF(algorithm=TPM2_ALG_NULL)
+    obj = ectx.ESYS_TR_PTR()
+    with ExitStack() as stack:
+        timeout = stack.enter_context(TPM2B_TIMEOUT_PTR_PTR())
+        ticket = stack.enter_context(TPMT_TK_AUTH_PTR_PTR())
+        ectx.StartAuthSession(
+            ESYS_TR_NONE,
+            ESYS_TR_NONE,
+            ESYS_TR_NONE,
+            ESYS_TR_NONE,
+            ESYS_TR_NONE,
+            nonce_caller,
+            TPM2_SE_POLICY,
+            sym,
+            TPM2_ALG_SHA256,
+            obj
+        )
+        ectx.PolicySecret(
+            ESYS_TR_RH_ENDORSEMENT,
+            obj.value(),
+            ESYS_TR_PASSWORD,
+            ESYS_TR_NONE,
+            ESYS_TR_NONE,
+            nonce_tpm, #FIXME
+            cphash, #FIXME
+            policy_ref, #FIXME
+            0,
+            timeout, #FIXME
+            ticket, #FIXME
+        )
+        return obj.value()
