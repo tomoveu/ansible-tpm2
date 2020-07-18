@@ -1,0 +1,7 @@
+namespace: "whooo"
+name: "tpm2"
+version: "0.0.1"
+readme: "README.md"
+authors:
+  - "Erik Larsson <who+ansible@cnackers.org"
+license: "GPL-3.0-or-later"
