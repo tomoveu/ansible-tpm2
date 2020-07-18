@@ -9,7 +9,7 @@ from base64 import b64encode
 from ansible.module_utils.basic import AnsibleModule
 from ansible.module_utils.tpm2 import esysctx, nvreadall, getnvindices
 from ansible.module_utils.tpm2.ek import get_ek_template
-from ansible.module_utils.tpm2.marshal import b64marshal
+from ansible_collections.whooo.tpm2.plugins.module_utils.marshal import b64marshal
 from tpm2_pytss.binding import (
     Tss2_MU_TPM2B_PUBLIC_Unmarshal,
     TPM2B_PUBLIC,

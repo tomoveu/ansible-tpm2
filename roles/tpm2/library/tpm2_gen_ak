@@ -5,7 +5,10 @@
 
 from contextlib import ExitStack
 from ansible.module_utils.basic import AnsibleModule
-from ansible.module_utils.tpm2.marshal import b64unmarshal, b64marshal
+from ansible_collections.whooo.tpm2.plugins.module_utils.marshal import (
+    b64unmarshal,
+    b64marshal,
+)
 from ansible.module_utils.tpm2 import esysctx
 from ansible.module_utils.tpm2.ak import create_ak
 from tpm2_pytss.binding import (
