@@ -9,69 +9,13 @@ from ansible.plugins.action import ActionBase
 from ansible.module_utils._text import to_bytes
 from cryptography import x509
 from cryptography.hazmat.backends import default_backend
-from cryptography.hazmat.primitives.asymmetric.rsa import RSAPublicKey, RSAPublicNumbers
-from cryptography.hazmat.primitives.asymmetric.ec import (
-    EllipticCurvePublicKey,
-    EllipticCurvePublicNumbers,
-    SECP256R1,
-)
-from base64 import b64decode
-from tpm2_pytss.esys import ESYSBinding
-from tpm2_pytss.binding import (
-    Tss2_MU_TPM2B_PUBLIC_Unmarshal,
-    TPM2B_PUBLIC,
-    TPM2_ALG_RSA,
-    TPM2_ALG_ECC,
-    TPM2_ECC_NIST_P256,
-)
-
-curves = (
-    (TPM2_ECC_NIST_P256, SECP256R1),
-)
-
-def curveid_to_curve(curveid):
-    for cid, curve in curves:
-        if cid == curveid:
-            return curve()
-    return None
-
-def buffer_to_bytes(src):
-    ba = bytearray()
-    buf = ESYSBinding.ByteArray.frompointer(src.buffer)
-    for i in range(0, src.size):
-        ba.append(buf[i])
-    return ba
+from cryptography.hazmat.primitives.asymmetric.rsa import RSAPublicKey
+from cryptography.hazmat.primitives.asymmetric.ec import EllipticCurvePublicKey
+from tpm2_pytss.binding import TPM2B_PUBLIC
+from ansible_collections.whooo.tpm2.plugins.module_utils.convert import public_to_crypto
+from ansible_collections.whooo.tpm2.plugins.module_utils.marshal import b64unmarshal
 
 class ActionModule(ActionBase):
-    def public_to_rsa_key(self, public):
-        e = public.parameters.rsaDetail.exponent
-        if e == 0:
-            e = 65537 # F4, default exponent
-        nbytes = buffer_to_bytes(public.unique.rsa)
-        n = int.from_bytes(nbytes, 'big')
-        key = RSAPublicNumbers(e, n).public_key(default_backend())
-        return key
-
-    def public_to_ecc_key(self, public):
-        cid = public.parameters.eccDetail.curveID
-        curve = curveid_to_curve(cid)
-        if curve is None:
-            AnsibleError("Unable to find curve for curveid {}".format(cid))
-        xbytes = buffer_to_bytes(public.unique.ecc.x)
-        x = int.from_bytes(xbytes, 'big')
-        ybytes = buffer_to_bytes(public.unique.ecc.y)
-        y = int.from_bytes(ybytes, 'big')
-        key = EllipticCurvePublicNumbers(x, y, curve).public_key(default_backend())
-        return key
-
-    def public_to_key(self, public):
-        if public.type == TPM2_ALG_RSA:
-            return self.public_to_rsa_key(public)
-        elif public.type == TPM2_ALG_ECC:
-            return self.public_to_ecc_key(public)
-        else:
-            raise AnsibleError("bad key type")
-
     def compare_rsa_cert_key(self, cnums, knums):
         if cnums.e != knums.e:
             raise AnsibleError('RSA exponent does not match')
@@ -128,13 +72,12 @@ class ActionModule(ActionBase):
             raise AnsibleError("failed to load certificate: {}".format(e))
 
         try:
-            public2b = b64decode(b64public)
             public = TPM2B_PUBLIC()
-            Tss2_MU_TPM2B_PUBLIC_Unmarshal(public2b, 0, public)
+            b64unmarshal(b64public, public)
         except Exception as e:
             raise AnsibleError("failed to unmarshal public part: {}".format(e))
 
-        key = self.public_to_key(public.publicArea)
+        key = public_to_crypto(public)
 
         self.compare_cert_key(cert, key)
 
