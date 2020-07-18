@@ -74,4 +74,4 @@ def public_to_crypto(public):
         return public_rsa_to_crypto(public.publicArea)
     elif keytype == TPM2_ALG_ECC:
         return public_ecc_to_crypto(public.publicArea)
-    raise Exception("Unsupported key type: {x}".format(keytype))
+    raise Exception("Unsupported key type: {}".format(keytype))
