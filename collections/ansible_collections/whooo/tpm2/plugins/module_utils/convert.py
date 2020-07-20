@@ -23,9 +23,10 @@ from tpm2_pytss.binding import (
     TPM2_ECC_NIST_P256,
 )
 
-def buffer_to_bytes(src):
+def buffer_to_bytes(src, attr='buffer'):
     ba = bytearray()
-    buf = ESYSBinding.ByteArray.frompointer(src.buffer)
+    battr = getattr(src, attr)
+    buf = ESYSBinding.ByteArray.frompointer(battr)
     for i in range(0, src.size):
         ba.append(buf[i])
     return ba
