@@ -27,6 +27,8 @@ from cryptography.hazmat.primitives.ciphers import Cipher, modes
 from cryptography.hazmat.primitives.hmac import HMAC
 from ansible.errors import AnsibleError
 from ansible.plugins.action import ActionBase
+from ansible_collections.whooo.tpm2.plugins.module_utils.compare import compare_public
+from ansible_collections.whooo.tpm2.plugins.module_utils.ak import get_ak_template
 from ansible_collections.whooo.tpm2.plugins.module_utils.marshal import (
     b64unmarshal,
     b64marshal,
@@ -35,6 +37,7 @@ from ansible_collections.whooo.tpm2.plugins.module_utils.marshal import (
 from ansible_collections.whooo.tpm2.plugins.module_utils.convert import (
     public_to_crypto,
     tpm2_to_crypto_alg,
+    tpm2_to_string_alg,
 )
 
 
@@ -190,6 +193,13 @@ class ActionModule(ActionBase):
         b64unmarshal(b64ek, ek)
         ak = TPM2B_PUBLIC()
         b64unmarshal(b64ak, ak)
+
+        aktype = tpm2_to_string_alg(ak.publicArea.type)
+        aktempl = get_ak_template(aktype)
+        try:
+            compare_public(ak, aktempl)
+        except Exception as e:
+            raise AnsibleError("AK does not match template: {}".format(e))
 
         seed, enc_seed = create_seed(ek)
         
