@@ -10,7 +10,7 @@ from ansible_collections.whooo.tpm2.plugins.module_utils.marshal import (
     b64marshal,
 )
 from ansible.module_utils.tpm2 import esysctx
-from ansible.module_utils.tpm2.ak import create_ak
+from ansible_collections.whooo.tpm2.plugins.module_utils.ak import create_ak
 from tpm2_pytss.binding import (
     TPM2B_PUBLIC,
     TPMS_CONTEXT,
