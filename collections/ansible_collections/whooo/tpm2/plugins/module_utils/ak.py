@@ -41,6 +41,7 @@ ak_base_template = TPMT_PUBLIC(
 )
 
 def get_ak_template(keytype):
+    keytype = keytype.lower()
     pub = ak_base_template
     if keytype == 'rsa':
         pub.type = TPM2_ALG_RSA
