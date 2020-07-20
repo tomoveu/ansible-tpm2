@@ -13,7 +13,7 @@ See example.yaml
 Requires tpm2-pytss >= 0.1.8 locally and on the remote host as well as pyca and the openssl cli tool locally.
 
 # TODO
-* Verify attributes of the created AK
 * Move everything into the ansible collection
 * Move usual functions out of plugins/modules into module_utils
 * Rework workflow
+* Better handling of creating and loading keys
