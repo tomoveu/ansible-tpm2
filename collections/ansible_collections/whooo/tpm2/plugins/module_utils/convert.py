@@ -11,7 +11,10 @@ from cryptography.hazmat.primitives.asymmetric.ec import (
     EllipticCurvePublicNumbers,
     SECP256R1,
 )
-from cryptography.hazmat.primitives.asymmetric.rsa import RSAPublicNumbers
+from cryptography.hazmat.primitives.asymmetric.rsa import (
+    RSAPublicNumbers,
+    RSAPublicKey,
+)
 from tpm2_pytss.esys import ESYSBinding
 from tpm2_pytss.binding import (
     TPM2_ALG_SHA256,
@@ -28,13 +31,21 @@ def buffer_to_bytes(src):
     return ba
 
 mappings = (
-    (TPM2_ALG_SHA256, SHA256),
+    (TPM2_ALG_SHA256, SHA256, 'SHA256'),
+    (TPM2_ALG_RSA, RSAPublicKey, 'RSA'),
+    (TPM2_ALG_ECC, EllipticCurvePublicKey, 'ECC'),
 )
 
 def tpm2_to_crypto_alg(algid):
-    for t, c in mappings:
+    for t, c, s in mappings:
         if t == algid:
             return c
+    return None
+
+def tpm2_to_string_alg(algid):
+    for t, c, s in mappings:
+        if t == algid:
+            return s
     return None
 
 curves = (
