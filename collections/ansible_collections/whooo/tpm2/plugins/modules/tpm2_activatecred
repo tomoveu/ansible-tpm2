@@ -1,0 +1,75 @@
+#!/usr/bin/python3
+# Copyright (c) 2020 by Erik Larsson 
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+
+from contextlib import ExitStack
+from ansible.module_utils.basic import AnsibleModule
+from ansible_collections.whooo.tpm2.plugins.module_utils.module import TPM2Module
+from ansible_collections.whooo.tpm2.plugins.module_utils.ek import ek_session
+from ansible_collections.whooo.tpm2.plugins.module_utils.marshal import (
+    b64unmarshal,
+)
+from tpm2_pytss.esys import ESYSBinding
+from tpm2_pytss.binding import (
+    TPM2B_ID_OBJECT,
+    TPM2B_ENCRYPTED_SECRET,
+    ESYS_TR_NONE,
+    ESYS_TR_PASSWORD,
+    TPM2B_DIGEST_PTR_PTR,
+    ESYS_TR_RH_ENDORSEMENT,
+)
+
+
+def buffer_to_bytes(src):
+    ba = bytearray()
+    buf = ESYSBinding.ByteArray.frompointer(src.buffer)
+    for i in range(0, src.size):
+        ba.append(buf[i])
+    return bytes(ba)
+
+class tpm2_activatecred(TPM2Module):
+    def __init__(self):
+        self.module = AnsibleModule(
+            argument_spec=dict(
+                credblob=dict(type='str', required=True),
+                secret=dict(type='str', required=True),
+                ek_context=dict(type='str'),
+                ek_handle=dict(type='str'),
+		ek_template=dict(type='str'),
+                ak_context=dict(type='str'),
+                ak_handle=dict(type='str'),
+		ak_public=dict(type='str'),
+                ak_private=dict(type='str'),
+            )
+        )
+        super().__init__(self.module)
+        credblob = TPM2B_ID_OBJECT()
+        b64unmarshal(self.module.params['credblob'], credblob)
+        secret = TPM2B_ENCRYPTED_SECRET()
+        b64unmarshal(self.module.params['secret'], secret)
+
+        ek_handle = self.load_primary('ek', self.module.params, ESYS_TR_RH_ENDORSEMENT)
+        ek_auth = ek_session(self.ectx)
+        akobj = self.load_key('ak', self.module.params, ek_handle, ek_auth)
+        ek_auth = ek_session(self.ectx)
+        with ExitStack() as stack:
+            certinfo = stack.enter_context(TPM2B_DIGEST_PTR_PTR())
+            self.ectx.ActivateCredential(
+                akobj,
+                ek_handle,
+                ESYS_TR_PASSWORD,
+                ek_auth,
+                ESYS_TR_NONE,
+                credblob,
+                secret,
+                certinfo,
+            )
+            self.cv = buffer_to_bytes(certinfo.value)
+
+    def run_module(self):
+        self.module.exit_json(cv=self.cv)
+
+if __name__ == '__main__':
+    ac = tpm2_activatecred()
+    ac.run_module()
