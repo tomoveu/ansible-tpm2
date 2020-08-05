@@ -1,24 +1,26 @@
-- hosts: host-with-tpm2
+- hosts: hosts-with-tpm2
+  collections:
+    - whooo.tpm2
   tasks:
-    - name: get RSA EK cert
-      tpm2_get_certificate:
-        type: 'rsa'
-      register: rsa_ek
-    - name: get ECC EK cert
-      tpm2_get_certificate:
+    - name: validate ECC ek
+      tpm2_validate_ek:
         type: 'ecc'
-      register: ecc_ek
-    - name: validate RSA EK
-      ek_validate:
-        cert: "{{ rsa_ek.cert }}"
-        public: "{{ rsa_ek.public }}"
-        cafile: "tpm2-ca.pem" # default is tpm2-ca.pem and is required
-        crlfile: "tpm2-crl.pem"
-    - name: validate ECC EK
-      ek_validate:
-        cert: "{{ ecc_ek.cert }}"
-        public: "{{ ecc_ek.public }}"
-        cafile: "tpm2-ca.pem" # default is tpm2-ca.pem and is required
-        crlfile: "tpm2-crl.pem"
-  roles:
-    - 'tpm2'
+        capath: 'tpm2-ca.pem'
+        crlpath: 'tpm2-crl.pem'
+        template_path: "ek/{{ ansible_fqdn }}-ecc-template"
+        public_path: "ek/{{ ansible_fqdn }}-ecc-public"
+    - name: create ECC ak
+      tpm2_create_ak:
+        type: 'ecc'
+        ek_template: "ek/{{ ansible_fqdn }}-ecc-template"
+        ek_public: "ek/{{ ansible_fqdn }}-ecc-public"
+        ak: "ak/{{ ansible_fqdn }}-ecc.json"
+    - name: create RSA ak
+      tpm2_create_ak:
+        type: 'rsa'
+        ek_template: "ek/{{ ansible_fqdn }}-ecc-template"
+        ek_public: "ek/{{ ansible_fqdn }}-ecc-public"
+        ak: "ak/{{ ansible_fqdn }}-rsa.json"
+    - name: quote
+      tpm2_quote:
+        ak: "ak/{{ ansible_fqdn }}-ecc.json"

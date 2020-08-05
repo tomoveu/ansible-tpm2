@@ -7,6 +7,7 @@ The following functions are currently supported:
 * Verify the EK against certificate and the certificate against a CA
 * Create an AK
 * Handle the MakeCredential and ActivateCredential procedure
+* Get a quote and verify it using the AK
 
 See example.yaml
 
@@ -15,5 +16,4 @@ Requires tpm2-pytss >= 0.1.8 locally and on the remote host as well as pyca and 
 # TODO
 * Move everything into the ansible collection
 * Move usual functions out of plugins/modules into module_utils
-* Rework workflow
-* Better handling of creating and loading keys
+* Create supporting functions/class for all modules
