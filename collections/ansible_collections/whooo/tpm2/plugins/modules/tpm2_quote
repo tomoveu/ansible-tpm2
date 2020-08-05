@@ -1,0 +1,186 @@
+#!/usr/bin/python3
+# Copyright (c) 2020 by Erik Larsson 
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+#from time import time
+from contextlib import ExitStack
+from base64 import b64decode, b16encode
+from ansible.module_utils.basic import AnsibleModule
+from ansible_collections.whooo.tpm2.plugins.module_utils.ek import ek_session
+from ansible_collections.whooo.tpm2.plugins.module_utils.marshal import (
+    b64unmarshal,
+    b64marshal,
+)
+from ansible_collections.whooo.tpm2.plugins.module_utils.module import TPM2Module
+from tpm2_pytss.binding import (
+    ESYS_TR_RH_ENDORSEMENT,
+    ESYS_TR_NONE,
+    TPMI_YES_NO_PTR,
+    TPMS_CAPABILITY_DATA_PTR_PTR,
+    TPM2_CAP_PCRS,
+    TPMS_PCR_SELECTION_ARRAY,
+    TPM2_ALG_SHA256,
+    TPML_PCR_SELECTION,
+    TPML_PCR_SELECTION_PTR_PTR,
+    TPML_DIGEST_PTR_PTR,
+    BYTE_ARRAY,
+    TPMS_PCR_SELECTION,
+    TPM2B_DIGEST_ARRAY,
+    TPM2B_DATA,
+    TPM2B_ATTEST_PTR_PTR,
+    TPMT_SIGNATURE_PTR_PTR,
+    ESYS_TR_PASSWORD,
+    TPM2B_PUBLIC,
+    TPMT_SIG_SCHEME,
+)
+
+class tpm2_quote(TPM2Module):
+    bank_mapping = dict(
+        sha256=TPM2_ALG_SHA256
+    )
+
+    def __init__(self):
+        self.module = AnsibleModule(
+            argument_spec=dict(
+                bank=dict(type='str', default='sha256', choices=['sha256']),
+                qdata=dict(type='str', required=True),
+		ek_template=dict(type='str', required=True),
+                ak_public=dict(type='str', required=True),
+                ak_private=dict(type='str', required=True),
+            )
+        )
+        super().__init__(self.module)
+        bankstr = self.module.params['bank']
+        self.bank = self.bank_mapping.get(bankstr, 0)
+        if self.bank == 0:
+            self.module.fail_json(msg="unknown bank {}".format(bankstr))
+        self.qdata = TPM2B_DATA(buffer=b64decode(self.module.params['qdata']))
+
+        ek_handle = self.load_primary('ek', self.module.params, ESYS_TR_RH_ENDORSEMENT)
+        ek_auth = ek_session(self.ectx)
+        self.ak_handle = self.load_key('ak', self.module.params, ek_handle, ek_auth)
+        akpub = TPM2B_PUBLIC()
+        b64unmarshal(self.module.params['ak_public'], akpub)
+        self.sigscheme = TPMT_SIG_SCHEME(
+            scheme=akpub.publicArea.parameters.asymDetail.scheme.scheme
+        )
+        self.sigscheme.details.any.hashAlg = akpub.publicArea.parameters.asymDetail.scheme.details.anySig.hashAlg
+        
+        
+        pcrsels = None
+        with ExitStack() as stack:
+            more = stack.enter_context(TPMI_YES_NO_PTR())
+            capdata = stack.enter_context(TPMS_CAPABILITY_DATA_PTR_PTR())
+            self.ectx.GetCapability(
+                ESYS_TR_NONE,
+                ESYS_TR_NONE,
+                ESYS_TR_NONE,
+                TPM2_CAP_PCRS,
+                0,
+                1,
+                more,
+                capdata
+            )
+            pcrsels = capdata.value.data.assignedPCR
+
+        parray = TPMS_PCR_SELECTION_ARRAY.frompointer(pcrsels.pcrSelections)
+        pcrsel = None
+        for i in range(0, pcrsels.count):
+            if parray[i].hash != self.bank:
+                continue
+            pcrsel = parray[i]
+            break
+        
+        if not pcrsel:
+            self.module.fail_json(msg="TPM does not have bank {}".format(bankstr))
+        if pcrsel.sizeofSelect == 0:
+            self.module.fail_json(msg="bank {} does not have any PCRs".format(bankstr))
+        selba = bytearray()
+        sarray = BYTE_ARRAY.frompointer(pcrsel.pcrSelect)
+        for i in range(0, pcrsel.sizeofSelect):
+            selba.append(sarray[i])
+        self.selb = bytes(selba)
+
+    def vals_to_dict(self, pcrsel, pcrvals, kaka=0):
+        selba = bytearray()
+        sarray = BYTE_ARRAY.frompointer(pcrsel.pcrSelect)
+        for i in range(0, pcrsel.sizeofSelect):
+            selba.append(sarray[i])
+        selba.reverse()
+        sels = int.from_bytes(selba, 'big')
+        darray = TPM2B_DIGEST_ARRAY.frompointer(pcrvals.digests)
+        digests = []
+        for i in range(0, pcrvals.count):
+            d2b = darray[i]
+            d = bytearray()
+            barray = BYTE_ARRAY.frompointer(d2b.buffer)
+            for j in range(0, d2b.size):
+                d.append(barray[j])
+            digests.append(b16encode(d))
+        for i in range(0, sels):
+            p = sels >> i
+            if not (p & 1):
+                continue
+            d = digests.pop(0)
+            k = "{0:02d}".format(i)
+            self.pcrs[k] = d
+
+    def run_module(self):
+        self.pcrs = dict()
+        for i in range(0, len(self.selb)):
+            sel = bytearray(b"\x00" * len(self.selb))
+            sel[i] = self.selb[i]
+            selb = bytes(sel)
+            s = TPMS_PCR_SELECTION(hash=self.bank, sizeofSelect=len(self.selb), pcrSelect=sel)
+            selin = TPML_PCR_SELECTION(count=1, pcrSelections=(s,))
+            with ExitStack() as stack:
+                selout = stack.enter_context(TPML_PCR_SELECTION_PTR_PTR())
+                pcrvals = stack.enter_context(TPML_DIGEST_PTR_PTR())
+                self.ectx.PCR_Read(
+                    ESYS_TR_NONE,
+                    ESYS_TR_NONE,
+                    ESYS_TR_NONE,
+                    selin,
+                    None,
+                    selout,
+                    pcrvals,
+                )
+                parray = TPMS_PCR_SELECTION_ARRAY.frompointer(selout.value.pcrSelections)
+                pcrsel = None
+                for j in range(0, selout.value.count):
+                    if parray[j].hash != self.bank:
+                        continue
+                    pcrsel = parray[j]
+                    break
+                if pcrsel is None:
+                    self.module.exit_json(msg='empty return pcr selection')
+                p = self.vals_to_dict(pcrsel, pcrvals.value, i)
+
+        qs = TPMS_PCR_SELECTION(hash=self.bank, sizeofSelect=len(self.selb), pcrSelect=self.selb)
+        qsel = TPML_PCR_SELECTION(
+            count=1,
+            pcrSelections=(qs,),
+        )
+        b64attest = None
+        b64sig = None
+        with ExitStack() as stack:
+            attest = stack.enter_context(TPM2B_ATTEST_PTR_PTR())
+            sig = stack.enter_context(TPMT_SIGNATURE_PTR_PTR())
+            self.ectx.Quote(
+                self.ak_handle,
+                ESYS_TR_PASSWORD,
+                ESYS_TR_NONE,
+                ESYS_TR_NONE,
+                self.qdata,
+                self.sigscheme,
+                qsel,
+                attest,
+                sig,
+            )
+            b64attest = b64marshal(attest.value)
+            b64sig = b64marshal(sig.value)
+        self.module.exit_json(pcrs=self.pcrs, attest=b64attest, signature=b64sig)
+
+if __name__ == '__main__':
+    m = tpm2_quote()
+    m.run_module()
