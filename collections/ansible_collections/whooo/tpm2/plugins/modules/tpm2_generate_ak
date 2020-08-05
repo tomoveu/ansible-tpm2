@@ -1,0 +1,75 @@
+#!/usr/bin/python3
+# Copyright (c) 2020 by Erik Larsson 
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+
+from contextlib import ExitStack
+from ansible.module_utils.basic import AnsibleModule
+from ansible_collections.whooo.tpm2.plugins.module_utils.ek import ek_session
+from ansible_collections.whooo.tpm2.plugins.module_utils.marshal import (
+    b64unmarshal,
+    b64marshal,
+)
+from tpm2_pytss.binding import (
+    TPM2B_PUBLIC,
+    ESYS_TR_RH_ENDORSEMENT,
+    ESYS_TR_NONE,
+    TPM2B_SENSITIVE_CREATE,
+    TPM2B_DATA,
+    TPML_PCR_SELECTION,
+    TPM2B_PRIVATE_PTR_PTR,
+    TPM2B_PUBLIC_PTR_PTR,
+    TPM2B_CREATION_DATA_PTR_PTR,
+    TPM2B_DIGEST_PTR_PTR,
+    TPMT_TK_CREATION_PTR_PTR,
+)
+from ansible_collections.whooo.tpm2.plugins.module_utils.module import TPM2Module
+
+class tpm2_generate_ak(TPM2Module):
+    def __init__(self):
+        self.module = AnsibleModule(
+            argument_spec=dict(
+                ak_template=dict(type='str', required=True),
+                ek_context=dict(type='str'),
+		ek_template=dict(type='str'),
+                ek_handle=dict(type='int'),
+            )
+        )
+        super().__init__(self.module)
+        self.ek_handle = self.load_primary('ek', self.module.params, ESYS_TR_RH_ENDORSEMENT)
+        self.template = TPM2B_PUBLIC()
+        b64unmarshal(self.module.params['ak_template'], self.template)
+
+    def run_module(self):
+        ek_auth = ek_session(self.ectx)
+        insens = TPM2B_SENSITIVE_CREATE()
+        outsideinfo = TPM2B_DATA()
+        creationpcr = TPML_PCR_SELECTION()
+        with ExitStack() as stack:
+            private = stack.enter_context(TPM2B_PRIVATE_PTR_PTR())
+            public = stack.enter_context(TPM2B_PUBLIC_PTR_PTR())
+            creationdata = stack.enter_context(TPM2B_CREATION_DATA_PTR_PTR())
+            creationhash = stack.enter_context(TPM2B_DIGEST_PTR_PTR())
+            creationtkt = stack.enter_context(TPMT_TK_CREATION_PTR_PTR())
+            self.ectx.Create(
+                self.ek_handle,
+                ek_auth,
+                ESYS_TR_NONE,
+                ESYS_TR_NONE,
+                insens,
+                self.template,
+                outsideinfo,
+                creationpcr,
+                private,
+                public,
+                creationdata,
+                creationhash,
+                creationtkt,
+            )
+            b64_private = b64marshal(private.value)
+            b64_public = b64marshal(public.value)
+        self.module.exit_json(changed=True, private=b64_private,  public=b64_public)
+
+if __name__ == '__main__':
+    m = tpm2_generate_ak()
+    m.run_module()
