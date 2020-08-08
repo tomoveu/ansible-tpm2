@@ -8,6 +8,7 @@ from cryptography.hazmat.primitives.kdf.concatkdf import ConcatKDFHash
 from cryptography.hazmat.primitives.ciphers.algorithms import AES
 from cryptography.hazmat.primitives.ciphers import Cipher, modes
 from cryptography.hazmat.primitives.hmac import HMAC
+from cryptography.hazmat.primitives.hashes import Hash
 from cryptography.hazmat.primitives.asymmetric.ec import (
     EllipticCurvePublicKey,
     ECDSA,
@@ -135,3 +136,9 @@ def verify_signature(signature, public, data):
     elif isinstance(key, EllipticCurvePublicKey):
         return verify_signature_ecc(signature, key, halg, data)
     raise Exception('unsupported key type')
+
+def extend(halg, current, new):
+    h = Hash(halg(), default_backend())
+    h.update(current)
+    h.update(new)
+    return h.finalize()
