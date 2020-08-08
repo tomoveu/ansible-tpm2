@@ -24,3 +24,7 @@
     - name: quote
       tpm2_quote:
         ak: "ak/{{ ansible_fqdn }}-ecc.json"
+      reqister: quote
+    - name: verify UEFI event log
+      tpm2_verify_eventlog:
+        pcr_digest: "{{ quote.pcrs }}"
