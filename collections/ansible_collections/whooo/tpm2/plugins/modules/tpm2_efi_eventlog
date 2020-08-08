@@ -1,0 +1,117 @@
+#!/usr/bin/python3
+# Copyright (c) 2020 by Erik Larsson 
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+import io
+import struct
+from base64 import b16encode, b64encode
+from ansible.module_utils.basic import AnsibleModule
+
+
+class tpm2_efi_eventlog(object):
+    def read_uint32(self, f):
+        b = f.read(4)
+        if len(b) != 4:
+            raise Exception('short read')
+        v = int.from_bytes(b, 'little')
+        return v
+
+    def read_uint16(self, f):
+        b = f.read(2)
+        if len(b) != 2:
+            raise Exception('short read')
+        v = int.from_bytes(b, 'little')
+        return v
+
+    def read_event(self, f):
+        es = self.read_uint32(f)
+        if es == 0:
+            return b""
+        event = f.read(es)
+        if len(event) != es:
+            raise Exception('unable to read event')
+        return event
+    
+    def check_header(self, f):
+        pcr = self.read_uint32(f)
+        if pcr != 0:
+            raise Exception("bad PCR in header, expected 0, got {}".format(pcr))
+        etype = self.read_uint32(f)
+        if etype != 3:
+            raise Exception("bad event type in header, expected 3, got {}".format(etype))
+        digest = f.read(20)
+        if digest != bytes(b"\x00" * 20):
+            raise Exception('bad digest in header')
+        event = self.read_event(f)
+        sign, platformclass, specminor, specmajor, specerrata, uintsize, numalgs = struct.unpack_from('<16sIBBBBI', event)
+        if sign != b"Spec ID Event03\x00":
+            raise Exception('Bad signature in header')
+        if specminor != 0 or specmajor != 2:
+            raise Exception('Bad specification version in header')
+        if uintsize == 1:
+            self.uintn = 4
+        elif uintsize == 2:
+            self.uintn = 8
+        else:
+            raise Exception('Bad uint size in header')
+        off = struct.calcsize('<16sIBBBBI')
+        for i in range(0, numalgs):
+            algid, digsize = struct.unpack_from('<HH', event, off)
+            off = off + 4
+            self.algs[algid] = digsize
+        if self.algs.get(self.alg, 0) == 0:
+            raise Exception('algorithm not found in header')
+        vendorinfo = struct.unpack_from('<p', event, off)
+        return vendorinfo
+
+    def read_digests(self, f):
+        dig = None
+        ndigs = self.read_uint32(f)
+        for i in range(0, ndigs):
+            algid = self.read_uint16(f)
+            digsize = self.algs.get(algid, -1)
+            if digsize == -1:
+                raise Exception('unknown digest algorithm in log')
+            d = f.read(digsize)
+            if algid == self.alg:
+                dig = d
+        return dig
+                
+    def read_eventlog(self, f):
+        entries = []
+        while f.tell() < self.datalen:
+            entry = dict()
+            entry['PCR'] = self.read_uint32(f)
+            entry['eventtype'] = self.read_uint32(f)
+            digest = self.read_digests(f)
+            event = self.read_event(f)
+            if not digest:
+                continue
+            entry['digest'] = b16encode(digest)
+            entry['event'] = b64encode(event)
+            entries.append(entry)
+        return entries
+    
+    def __init__(self):
+        module = AnsibleModule(
+            argument_spec=dict(
+                alg=dict(type='int', default=0x0b),
+            )
+        )
+
+        self.alg = module.params['alg']
+        self.algs = dict()
+        
+        test = None
+        entries = None
+        with open('/sys/kernel/security/tpm0/binary_bios_measurements', 'rb') as mf:
+            mdata = mf.read()
+        self.datalen = len(mdata)
+        with io.BytesIO(mdata) as f:
+            test = self.check_header(f)
+            entries = self.read_eventlog(f)
+            
+        module.exit_json(msg='sure', test=test, entries=entries, uintsize=self.uintn)
+
+if __name__ == '__main__':
+    tpm2_efi_eventlog()
